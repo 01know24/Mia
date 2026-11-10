@@ -626,29 +626,50 @@
     const MOBIUS_R = 12.0;
     const MOBIUS_WIDTH = 4.2;
 
-    function mobiusPoint(u, v) {
+    // Exact analytical orthonormal frame on the Möbius manifold
+    // Tangent (Z): forward along track
+    // Lateral (X): across ribbon width (on surface)
+    // Normal (Y): perpendicular to ribbon surface
+    // Guaranteed right-handed: Lateral x Normal = Tangent (det = +1.0)
+    function getMobiusFrame(u, v = 0.0) {
       const halfU = u / 2.0;
-      const x = (MOBIUS_R + v * Math.cos(halfU)) * Math.cos(u);
-      const y = (MOBIUS_R + v * Math.cos(halfU)) * Math.sin(u);
-      const z = v * Math.sin(halfU);
-      return new THREE.Vector3(x, z, y);
+      const cosHalf = Math.cos(halfU);
+      const sinHalf = Math.sin(halfU);
+      const cosU = Math.cos(u);
+      const sinU = Math.sin(u);
+
+      // Swapping Y & Z to lay flat in Three.js world coordinates
+      const x = (MOBIUS_R + v * cosHalf) * cosU;
+      const y = (MOBIUS_R + v * cosHalf) * sinU;
+      const z = v * sinHalf;
+      const pos = new THREE.Vector3(x, z, y);
+
+      // Tangent (Forward along track, length = 1)
+      const tangent = new THREE.Vector3(-sinU, 0.0, cosU);
+
+      // Lateral (Along ribbon width on surface, length = 1)
+      const lateral = new THREE.Vector3(cosHalf * cosU, sinHalf, cosHalf * sinU);
+
+      // Normal (Perpendicular to ribbon surface, length = 1)
+      const normal = new THREE.Vector3(-cosU * sinHalf, cosHalf, -sinU * sinHalf);
+
+      return { pos, tangent, lateral, normal };
+    }
+
+    function mobiusPoint(u, v = 0.0) {
+      return getMobiusFrame(u, v).pos;
     }
 
     function mobiusTangent(u) {
-      const delta = 0.001;
-      const p1 = mobiusPoint(u - delta, 0);
-      const p2 = mobiusPoint(u + delta, 0);
-      return p2.clone().sub(p1).normalize();
+      return getMobiusFrame(u, 0.0).tangent;
     }
 
-    function mobiusNormal(u, v) {
-      const delta = 0.001;
-      const pCenter = mobiusPoint(u, v);
-      const pU = mobiusPoint(u + delta, v);
-      const pV = mobiusPoint(u, v + delta);
-      const dU = pU.clone().sub(pCenter);
-      const dV = pV.clone().sub(pCenter);
-      return new THREE.Vector3().crossVectors(dU, dV).normalize();
+    function mobiusNormal(u, v = 0.0) {
+      return getMobiusFrame(u, v).normal;
+    }
+
+    function mobiusLateral(u, v = 0.0) {
+      return getMobiusFrame(u, v).lateral;
     }
 
     // High-res Möbius Geometry
@@ -804,53 +825,59 @@
             color: 0x00e5ff,
             transparent: true,
             opacity: 0.5,
-            wireframe: true
+            wireframe: true,
+            side: THREE.DoubleSide
           })
         : new THREE.MeshStandardMaterial({
             color: 0x121722,
             metalness: 0.85,
             roughness: 0.25,
             emissive: 0x060c18,
-            emissiveIntensity: 0.4
+            emissiveIntensity: 0.4,
+            side: THREE.DoubleSide
           });
 
       const sinewMat = isPhantom
-        ? new THREE.MeshBasicMaterial({ color: 0x9d4edd, transparent: true, opacity: 0.55 })
+        ? new THREE.MeshBasicMaterial({ color: 0x9d4edd, transparent: true, opacity: 0.55, side: THREE.DoubleSide })
         : new THREE.MeshStandardMaterial({
             color: 0x6e0023,
             metalness: 0.4,
             roughness: 0.5,
             emissive: 0xff0044,
-            emissiveIntensity: 0.8
+            emissiveIntensity: 0.8,
+            side: THREE.DoubleSide
           });
 
       const coreGlowMat = isPhantom
-        ? new THREE.MeshBasicMaterial({ color: 0x00ffff, transparent: true, opacity: 0.85 })
+        ? new THREE.MeshBasicMaterial({ color: 0x00ffff, transparent: true, opacity: 0.85, side: THREE.DoubleSide })
         : new THREE.MeshStandardMaterial({
             color: 0xff0055,
             emissive: 0xff0055,
             emissiveIntensity: 2.5,
-            roughness: 0.1
+            roughness: 0.1,
+            side: THREE.DoubleSide
           });
 
       const bladeEdgeMat = isPhantom
-        ? new THREE.MeshBasicMaterial({ color: 0x00e5ff, transparent: true, opacity: 0.75 })
+        ? new THREE.MeshBasicMaterial({ color: 0x00e5ff, transparent: true, opacity: 0.75, side: THREE.DoubleSide })
         : new THREE.MeshStandardMaterial({
             color: 0xff0044,
             emissive: 0xff0055,
             emissiveIntensity: 2.2,
             metalness: 0.95,
-            roughness: 0.15
+            roughness: 0.15,
+            side: THREE.DoubleSide
           });
 
       const sensorMat = isPhantom
-        ? new THREE.MeshBasicMaterial({ color: 0x00e5ff, transparent: true, opacity: 0.7 })
+        ? new THREE.MeshBasicMaterial({ color: 0x00e5ff, transparent: true, opacity: 0.7, side: THREE.DoubleSide })
         : new THREE.MeshStandardMaterial({
             color: 0x00e5ff,
             emissive: 0x00e5ff,
             emissiveIntensity: 2.0,
             metalness: 0.9,
-            roughness: 0.2
+            roughness: 0.2,
+            side: THREE.DoubleSide
           });
 
       const finMat = isPhantom
@@ -878,14 +905,8 @@
       const lateralFinsR = [];
       const segmentCount = 16; // Elongated graceful body
 
-      const spineRoot = new THREE.Group();
-      creature.add(spineRoot);
-
       for (let i = 0; i < segmentCount; i++) {
         const segGroup = new THREE.Group();
-        // Base natural spacing
-        segGroup.baseZ = -i * 0.38;
-        segGroup.position.z = segGroup.baseZ;
 
         // Taper factor: thick in chest (i=1..4), slender in neck (i=0) and tapering to tail (i=15)
         let taper = 1.0;
@@ -896,14 +917,14 @@
         segGroup.taper = taper;
 
         // 1. Annular Ring Armor (Chitin Metamere)
-        const ringGeo = new THREE.CylinderGeometry(0.48 * taper, 0.54 * taper, 0.36, 8, 1);
+        const ringGeo = new THREE.CylinderGeometry(0.48 * taper, 0.54 * taper, 0.38, 8, 1);
         ringGeo.rotateX(Math.PI / 2);
         const ringMesh = new THREE.Mesh(ringGeo, chitinMat);
         ringMesh.position.y = 0.04 * taper;
         segGroup.add(ringMesh);
 
         // 2. Ventral Peristaltic Muscular Sole (Pads that touch & grip the strip)
-        const ventralGeo = new THREE.BoxGeometry(0.7 * taper, 0.16 * taper, 0.34);
+        const ventralGeo = new THREE.BoxGeometry(0.7 * taper, 0.16 * taper, 0.36);
         const ventralMesh = new THREE.Mesh(ventralGeo, sinewMat);
         ventralMesh.position.y = -0.2 * taper;
         segGroup.add(ventralMesh);
@@ -931,7 +952,7 @@
         segGroup.add(finR);
         lateralFinsR.push(finR);
 
-        spineRoot.add(segGroup);
+        creature.add(segGroup);
         spineSegments.push(segGroup);
       }
 
@@ -939,8 +960,8 @@
       // B. Head & Predatory Serpentine Skull
       // ==========================================
       const headGroup = new THREE.Group();
-      headGroup.position.set(0, 0.2, 0.65);
-      spineRoot.add(headGroup);
+      headGroup.position.set(0, 0.1, 0.55);
+      spineSegments[0].add(headGroup);
 
       // Streamlined viper-like skull
       const skullGeo = new THREE.ConeGeometry(0.44, 1.25, 6);
@@ -983,8 +1004,8 @@
       // C. Rotating Quantum Racemase Heart
       // ==========================================
       const heartGroup = new THREE.Group();
-      heartGroup.position.set(0, 0.12, -0.45);
-      spineRoot.add(heartGroup);
+      heartGroup.position.set(0, 0.15, 0.0);
+      spineSegments[2].add(heartGroup);
 
       // Outer Gimbal Ring (Rotates axis 1)
       const ring1 = new THREE.Mesh(new THREE.TorusGeometry(0.38, 0.03, 8, 24), sensorMat);
@@ -1004,7 +1025,7 @@
       // =======================================================
       // LEFT APPARATUS: Articulated Heavy High-Frequency Scythe Blade
       const bladeArm = new THREE.Group();
-      bladeArm.position.set(-0.55, 0.22, 0.2);
+      bladeArm.position.set(-0.55, 0.18, 0.0);
 
       const bUpper = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.12, 0.7, 6), chitinMat);
       bUpper.position.set(-0.25, 0.15, 0);
@@ -1035,11 +1056,11 @@
 
       bForearm.add(bScytheGroup);
       bladeArm.add(bForearm);
-      spineRoot.add(bladeArm);
+      spineSegments[1].add(bladeArm);
 
       // RIGHT APPARATUS: Multi-sensor antenna tendrils + Gripping Hand
       const sensorArm = new THREE.Group();
-      sensorArm.position.set(0.55, 0.22, 0.2);
+      sensorArm.position.set(0.55, 0.18, 0.0);
 
       const sUpper = new THREE.Mesh(new THREE.SphereGeometry(0.14, 8, 8), chitinMat);
       sensorArm.add(sUpper);
@@ -1067,7 +1088,7 @@
         sensorArm.add(tGroup);
         tendrils.push(segments);
       }
-      spineRoot.add(sensorArm);
+      spineSegments[1].add(sensorArm);
 
       // Anchor Points for 12 Dense Quantum Entanglement Lines
       creature.anchorPoints = {
@@ -1079,61 +1100,82 @@
         bladeArm: bladeArm,
         bForearm: bForearm,
         sensorArm: sensorArm,
-        spineFront: spineSegments[1],
+        spineFront: spineSegments[0],
         spineQuarter: spineSegments[4],
         spineMid: spineSegments[8],
         spineTail: spineSegments[spineSegments.length - 1]
       };
 
       // Expose Dynamic Peristaltic Update Hook
-      creature.updatePose = function (peristalsisCycle, time, separationRatio, isMirrored) {
-        // ========================================================
-        // 1. True Peristaltic Wave + Serpentine S-Curve Locomotion
-        // ========================================================
+      // Exactly curves every segment along the Möbius manifold
+      creature.updatePose = function (currentU, peristalsisCycle, time, separationRatio, isMirrored) {
+        const segSpacing = 0.38;
+        const dTheta = segSpacing / MOBIUS_R;
+        const stretch = isMirrored ? (1.0 + separationRatio * 0.45) : 1.0;
+
+        // Position and orient every segment strictly parallel to the track curvature
         for (let i = 0; i < spineSegments.length; i++) {
           const seg = spineSegments[i];
-          const phase = peristalsisCycle - i * 0.52;
+          const segPhase = peristalsisCycle - i * 0.52;
+          const compress = Math.cos(segPhase);
+          const crawlOffset = (Math.sin(segPhase) * 0.12) / MOBIUS_R;
 
-          // A. Peristaltic Longitudinal Contraction & Expansion (逐節舒縮波)
-          const compress = Math.cos(phase);
-          // Compress longitudinally: expands radially (thicker & shorter)
-          // Expand longitudinally: contracts radially (thinner & longer)
-          const radialScale = (1.0 - compress * 0.22) * seg.taper;
-          const lengthScale = 1.0 + compress * 0.32;
-          seg.scale.set(radialScale, radialScale, lengthScale);
+          // Track angle for this segment
+          const uSeg = currentU - (i * dTheta * stretch) + crawlOffset;
 
-          // Position shifting due to peristaltic crawl
-          const crawlOffset = Math.sin(phase) * 0.12;
-          seg.position.z = seg.baseZ + crawlOffset;
+          // Lateral S-curve slithering wave across ribbon width (V)
+          const lateralAmp = 0.10 + (i / segmentCount) * 0.32;
+          let vSeg = Math.sin(peristalsisCycle * 0.8 - i * 0.45) * lateralAmp;
+          if (isMirrored) {
+            vSeg = -vSeg + (separationRatio * 0.55);
+          }
 
-          // B. Serpentine Lateral Undulation (橫向 S 曲線蛇行波)
-          const lateralAmp = 0.12 + (i / segmentCount) * 0.45;
-          seg.rotation.y = Math.sin(phase * 0.8) * lateralAmp;
-          seg.position.x = Math.sin(phase * 0.8) * (lateralAmp * 1.1);
+          // Normal height (belly firmly parallel against ribbon surface)
+          const hSeg = 0.18 + (Math.sin(segPhase) * 0.035);
 
-          // C. Vertical Pitch Undulation (貼面起伏爬行)
-          seg.rotation.x = Math.cos(phase) * 0.08;
-          seg.position.y = (Math.sin(phase) * 0.06);
+          // Analytical orthonormal frame: pos, tangent, lateral, normal
+          const frame = getMobiusFrame(uSeg, vSeg);
 
-          // D. Undulating Lateral Ribbon Fins (兩側推進波褶)
+          // Place segment in world coordinates
+          seg.position.copy(frame.pos).addScaledVector(frame.normal, hSeg);
+
+          // Basis: X=lateral, Y=normal, Z=tangent (Strictly parallel to track!)
+          const mat = new THREE.Matrix4();
+          mat.makeBasis(frame.lateral, frame.normal, frame.tangent);
+          seg.quaternion.setFromRotationMatrix(mat);
+
+          // Subtle organic pitch and yaw wiggle
+          const qWiggle = new THREE.Quaternion();
+          const eulerWiggle = new THREE.Euler(
+            Math.cos(segPhase) * 0.06,                          // Pitch (crawling)
+            Math.cos(peristalsisCycle * 0.8 - i * 0.45) * 0.14, // Yaw (S-curve turning)
+            Math.sin(time * 6.0 + i) * (isMirrored ? separationRatio * 0.35 : 0),
+            'YXZ'
+          );
+          qWiggle.setFromEuler(eulerWiggle);
+          seg.quaternion.multiply(qWiggle);
+
+          // Scale: peristaltic breathing & chiral inversion
+          const radialScale = (1.0 - compress * 0.18) * seg.taper * 1.35;
+          const lengthScale = (1.0 + compress * 0.25) * 1.35;
+          const chiralSign = isMirrored ? -1 : 1;
+          seg.scale.set(radialScale * chiralSign, radialScale, lengthScale);
+
+          // Undulating lateral fringe fins
           const finWave = Math.sin(time * 8.0 - i * 0.65);
           lateralFinsL[i].rotation.x = finWave * 0.55;
           lateralFinsR[i].rotation.x = -finWave * 0.55;
-          lateralFinsL[i].position.y = -0.05 + finWave * 0.06;
-          lateralFinsR[i].position.y = -0.05 + finWave * 0.06;
+          lateralFinsL[i].position.y = -0.05 + finWave * 0.05;
+          lateralFinsR[i].position.y = -0.05 + finWave * 0.05;
         }
 
-        // ==========================================
-        // 2. Head & Jaw Gestures
-        // ==========================================
-        headGroup.rotation.y = Math.sin(peristalsisCycle * 0.4) * 0.25;
-        headGroup.rotation.x = -0.04 + Math.cos(peristalsisCycle * 0.8) * 0.1;
+        // Head gestures
+        headGroup.rotation.y = Math.sin(peristalsisCycle * 0.4) * 0.2;
+        headGroup.rotation.x = -0.04 + Math.cos(peristalsisCycle * 0.8) * 0.08;
         jawL.rotation.y = Math.sin(time * 6.0) * 0.2 + (separationRatio * 0.35);
         jawR.rotation.y = -Math.sin(time * 6.0) * 0.2 - (separationRatio * 0.35);
 
-        // ==========================================
-        // 3. Racemase Heart Gimbal Spin & Pulse
-        // ==========================================
+        // Racemase heart gimbal rotation & pulsation
         ring1.rotation.x = time * 2.5;
         ring1.rotation.y = time * 1.8;
         ring2.rotation.y = -time * 3.2;
@@ -1141,34 +1183,21 @@
         const pulse = 1.0 + Math.sin(time * 8.0) * 0.22 + (separationRatio * 0.3);
         coreMesh.scale.set(pulse, pulse, pulse);
 
-        // ==========================================
-        // 4. Scythe Blade & Sensor Tendrils Dynamics
-        // ==========================================
+        // Left scythe hunting motion
         bUpper.rotation.x = Math.sin(peristalsisCycle * 0.5) * 0.25;
         bForearm.rotation.z = -0.2 + Math.sin(peristalsisCycle + 1.0) * 0.3 - (separationRatio * 0.5);
         bScytheGroup.rotation.x = Math.sin(time * 4.0) * 0.2;
 
+        // Right sensor tendrils wave
         tendrils.forEach((tSegments, tIdx) => {
           tSegments.forEach((node, sIdx) => {
             node.rotation.z = Math.sin(time * 4.5 + tIdx + sIdx * 0.8) * 0.28;
             node.rotation.x = Math.cos(time * 4.0 + tIdx * 1.5 + sIdx * 0.5) * 0.24;
           });
         });
-
-        // ========================================================
-        // 5. Dynamic Delamination (Deconstruction / Lagging Wave)
-        // ========================================================
-        if (isPhantom) {
-          // Phantom elongates and stretches in reverse direction along the negative tangent
-          for (let i = 0; i < spineSegments.length; i++) {
-            const seg = spineSegments[i];
-            seg.position.z = seg.baseZ - (i * separationRatio * 0.45);
-            seg.rotation.z = Math.sin(time * 6.0 + i) * separationRatio * 0.45;
-          }
-        }
       };
 
-      creature.scale.set(1.35, 1.35, 1.35);
+      creature.scale.set(1.0, 1.0, 1.0);
       return creature;
     }
 
@@ -1346,27 +1375,6 @@
     }
 
     // ==========================================
-    // Surface Orientation Matrix
-    // ==========================================
-    function placeOnMobius(obj, uRad, vOffset, isMirrored = false) {
-      const pos = mobiusPoint(uRad, vOffset);
-      const tangent = mobiusTangent(uRad);
-      const normal = mobiusNormal(uRad, vOffset);
-      const binormal = new THREE.Vector3().crossVectors(tangent, normal).normalize();
-
-      const mat = new THREE.Matrix4();
-      mat.makeBasis(binormal, normal, tangent);
-      obj.position.copy(pos);
-      obj.quaternion.setFromRotationMatrix(mat);
-
-      if (isMirrored) {
-        obj.scale.set(-1.35, 1.35, 1.35);
-      } else {
-        obj.scale.set(1.35, 1.35, 1.35);
-      }
-    }
-
-    // ==========================================
     // Main Simulation Loop
     // ==========================================
     const clock = new THREE.Clock();
@@ -1413,26 +1421,35 @@
         separationRatio = Math.cos((distToNearestSeam / SEAM_HALF_WIDTH_DEG) * (Math.PI / 2.0));
       }
 
-      // 1. Position & Animate Physical Organism
-      placeOnMobius(physicalCreature, currentU, 0.0, !baseChiralityIsLeft);
-      physicalCreature.updatePose(peristalsisCycle, time, separationRatio, false);
+      // 1. Position & Animate Physical Organism along the track
+      // Body segments strictly curve and crawl parallel to the Möbius manifold
+      physicalCreature.updatePose(currentU, peristalsisCycle, time, separationRatio, !baseChiralityIsLeft);
+
+      // Track World Positions of Organism's Anatomy
+      const curFrame = getMobiusFrame(currentU, 0.0);
+      const chestPos = new THREE.Vector3();
+      physicalCreature.anchorPoints.heart.getWorldPosition(chestPos);
+      const headPos = new THREE.Vector3();
+      physicalCreature.anchorPoints.head.getWorldPosition(headPos);
 
       // Dynamic Bioluminescent lights follow organism
-      const physPos = physicalCreature.position;
-      bioLight.position.copy(physPos).add(new THREE.Vector3(0, 1.5, 0));
+      bioLight.position.copy(chestPos).addScaledVector(curFrame.normal, 1.8);
       bioLight.color.setHex(baseChiralityIsLeft ? 0xff0055 : 0x00e5ff);
 
       // 2. Position & Animate Phantom Enantiomer
+      const pChestPos = new THREE.Vector3();
       if (separationRatio > 0.001) {
         phantomCreature.visible = true;
 
-        // Visceral Spatiotemporal Lag: stretches behind
+        // Visceral Spatiotemporal Lag: stretches behind along the track
         const lagU = currentU - (separationRatio * 0.32);
-        placeOnMobius(phantomCreature, lagU, separationRatio * 0.6, baseChiralityIsLeft);
-        phantomCreature.updatePose(peristalsisCycle, time, separationRatio, true);
+        phantomCreature.updatePose(lagU, peristalsisCycle, time, separationRatio, baseChiralityIsLeft);
+
+        phantomCreature.anchorPoints.heart.getWorldPosition(pChestPos);
+        const pFrame = getMobiusFrame(lagU, separationRatio * 0.6);
 
         phantomLight.intensity = separationRatio * 3.5;
-        phantomLight.position.copy(phantomCreature.position).add(new THREE.Vector3(0, 1.5, 0));
+        phantomLight.position.copy(pChestPos).addScaledVector(pFrame.normal, 1.8);
 
         // Connect 12 Dense Quantum Entanglement Channels
         const pAnchors = physicalCreature.anchorPoints;
@@ -1491,12 +1508,11 @@
         // Trailing Phantom Wake Particles
         wakeParticles.visible = true;
         const wArray = wakeGeo.attributes.position.array;
-        const qCenter = phantomCreature.position;
         for (let i = 0; i < wakeCount; i++) {
           const decay = (i / wakeCount);
-          wArray[i * 3 + 0] = qCenter.x + (Math.sin(time * 3 + i) * 1.5 * decay);
-          wArray[i * 3 + 1] = qCenter.y + (Math.cos(time * 2 + i) * 0.8 * decay);
-          wArray[i * 3 + 2] = qCenter.z + (Math.sin(time * 4 + i) * 1.5 * decay);
+          wArray[i * 3 + 0] = pChestPos.x + (Math.sin(time * 3 + i) * 1.5 * decay);
+          wArray[i * 3 + 1] = pChestPos.y + (Math.cos(time * 2 + i) * 0.8 * decay);
+          wArray[i * 3 + 2] = pChestPos.z + (Math.sin(time * 4 + i) * 1.5 * decay);
         }
         wakeGeo.attributes.position.needsUpdate = true;
         wakeMat.opacity = separationRatio * 0.7;
@@ -1530,9 +1546,9 @@
         cardTitle.innerText = '手性分離態 (DELAMINATED PHASE)';
         cardTag.innerText = '● 穿越縫合線';
         cardTag.style.color = 'var(--accent-purple)';
-        cardDesc.innerHTML = '生物進入莫比烏斯縫合線干擾區！<b>無足16節體節舒縮蠕動前行</b>，右旋鏡像虛影被幾何張力向後撕扯延展。12 個主要解剖節點激發大分子量子糾纏光纖，實現跨微觀時空裂隙的零時延神經傳導。';
+        cardDesc.innerHTML = '生物進入莫比烏斯縫合線干擾區！<b>無足16節體節平行軌道舒縮蠕動前行</b>，右旋鏡像虛影被幾何張力向後撕扯延展。12 個主要解剖節點激發大分子量子糾纏光纖，實現跨微觀時空裂隙的零時延神經傳導。';
         cardState.className = 'state-card purple';
-        bannerText.innerText = '⚡ 警報：縫合線空間撕裂！體節蠕動波推動實體，鏡像虛影向後解構延展';
+        bannerText.innerText = '⚡ 警報：縫合線空間撕裂！體節平行貼軌蠕動，鏡像虛影順軌道向後解構延展';
       } else if (separationRatio > 0.01) {
         telePhase.innerText = '縫合重組態 (SUTURING)';
         telePhase.className = 'telemetry-val';
@@ -1552,27 +1568,25 @@
         cardTitle.innerText = '穩定態 (STABLE PHASE)';
         cardTag.innerText = '● 巡弋單軌';
         cardTag.style.color = 'var(--accent-crimson)';
-        cardDesc.innerHTML = `生物維持常態外骨骼與16節無足蠕動推進。當前處於【${baseChiralityIsLeft ? 'L-左旋正向循環' : 'D-右旋逆向循環'}】，體內雙向消旋心臟高速運轉，維持鏡像代謝。`;
+        cardDesc.innerHTML = `生物維持常態外骨骼與16節無足平行蠕動推進。當前處於【${baseChiralityIsLeft ? 'L-左旋正向循環' : 'D-右旋逆向循環'}】，體內雙向消旋心臟高速運轉，維持鏡像代謝。`;
         cardState.className = 'state-card crimson';
-        bannerText.innerText = `無足16節蠕行中：當前手性為 [${baseChiralityIsLeft ? 'L-左旋' : 'D-右旋'}]，走滿 720° 始能復原`;
+        bannerText.innerText = `無足16節平行貼軌蠕動中：當前手性為 [${baseChiralityIsLeft ? 'L-左旋' : 'D-右旋'}]，走滿 720° 始能復原`;
       }
 
-      // Camera Handling
+      // Camera Handling (Smoothly follows creature body parallel to track)
       if (cameraModeIndex === 1) { // Follow Creature
-        const cPos = physicalCreature.position;
-        const forward = mobiusTangent(currentU).multiplyScalar(8);
-        const up = mobiusNormal(currentU, 0).multiplyScalar(5);
-        camera.position.lerp(cPos.clone().sub(forward).add(up), 0.08);
-        controls.target.lerp(cPos, 0.1);
+        const forward = curFrame.tangent.clone().multiplyScalar(7.5);
+        const up = curFrame.normal.clone().multiplyScalar(3.8);
+        camera.position.lerp(chestPos.clone().sub(forward).add(up), 0.08);
+        controls.target.lerp(headPos, 0.1);
       } else if (cameraModeIndex === 2) { // Seam Focus
         camera.position.lerp(new THREE.Vector3(12, 10, 8), 0.05);
         controls.target.lerp(seamPos, 0.08);
       } else if (cameraModeIndex === 3) { // Head Macro Close-up
-        const cPos = physicalCreature.position;
-        const forward = mobiusTangent(currentU).multiplyScalar(2.2);
-        const normal = mobiusNormal(currentU, 0).multiplyScalar(1.5);
-        camera.position.lerp(cPos.clone().add(forward).add(normal), 0.09);
-        controls.target.lerp(cPos.clone().add(forward.multiplyScalar(0.4)), 0.1);
+        const forward = curFrame.tangent.clone().multiplyScalar(2.2);
+        const up = curFrame.normal.clone().multiplyScalar(1.2);
+        camera.position.lerp(headPos.clone().add(forward).add(up), 0.09);
+        controls.target.lerp(headPos, 0.1);
       }
 
       controls.update();
