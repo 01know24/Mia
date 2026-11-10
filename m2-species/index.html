@@ -437,7 +437,7 @@
       <div class="telemetry-badges">
         <div class="telemetry-item">
           <div class="telemetry-label">環面進程 (Progression)</div>
-          <div class="telemetry-val" id="tele-angle">0.0° / 720°</div>
+          <div class="telemetry-val" id="tele-angle">45.0° / 720°</div>
         </div>
         <div class="telemetry-item">
           <div class="telemetry-label">主導手性 (Chirality)</div>
@@ -445,11 +445,11 @@
         </div>
         <div class="telemetry-item">
           <div class="telemetry-label">拓撲狀態 (Phase)</div>
-          <div class="telemetry-val" id="tele-phase">穩定態 (STABLE)</div>
+          <div class="telemetry-val crimson" id="tele-phase">穩定態 (STABLE)</div>
         </div>
         <div class="telemetry-item">
           <div class="telemetry-label">EPR糾纏保真度</div>
-          <div class="telemetry-val purple" id="tele-epr">99.98%</div>
+          <div class="telemetry-val" id="tele-epr">100% (常規疊加)</div>
         </div>
       </div>
     </header>
@@ -484,9 +484,9 @@
         <div class="slider-container" id="slider-box">
           <div class="slider-header">
             <span>拓撲進程 (0° - 720°)</span>
-            <span id="slider-val">0°</span>
+            <span id="slider-val">45°</span>
           </div>
-          <input type="range" id="u-slider" min="0" max="720" value="0" step="0.5" oninput="onSliderChange(this.value)">
+          <input type="range" id="u-slider" min="0" max="720" value="45" step="0.5" oninput="onSliderChange(this.value)">
         </div>
 
         <div class="slider-container">
@@ -516,7 +516,7 @@
       <!-- Center Prompt / Status Pill -->
       <div class="prompt-banner">
         <div class="indicator-pulse"></div>
-        <span id="banner-text">無足16節體節舒縮蠕動中：繞行 360° 手性逆轉為右旋，走滿 720° 始能復原</span>
+        <span id="banner-text">無足16節平行貼軌蠕動中：當前手性為 [L-左旋]，走滿 720° 始能復原</span>
       </div>
 
       <!-- Right Information Card -->
@@ -526,13 +526,13 @@
           <span>ANATOMICAL TELEMETRY</span>
         </div>
 
-        <div class="state-card" id="card-state">
+        <div class="state-card crimson" id="card-state">
           <div class="state-header">
-            <span id="card-title">穩定態 (STABLE STATE)</span>
-            <span id="card-tag" style="font-size:0.7rem; color:var(--accent-cyan);">● 常規維度</span>
+            <span id="card-title">穩定態 (STABLE PHASE)</span>
+            <span id="card-tag" style="font-size:0.7rem; color:var(--accent-crimson);">● 巡弋單軌</span>
           </div>
           <div class="state-desc" id="card-desc">
-            生物外觀維持常規動物軀幹。體內中軸莫比烏斯褶線閉合，骨骼與血肉完全疊加。
+            生物維持常態外骨骼與 16 節無足平行蠕動推進。當前處於【L-左旋正向循環】，體內雙向消旋心臟高速運轉，維持鏡像代謝。
           </div>
         </div>
 
@@ -1280,13 +1280,11 @@
     let currentMode = 'patrol';
     let isPlaying = true;
     let speed = 1.0;
-    let currentAngleDeg = 0.0;
+    let currentAngleDeg = 45.0;
     let peristalsisCycle = 0.0;
     let isXRay = false;
     let cameraModeIndex = 0;
     const cameraModes = ['自由旋轉', '隨體追蹤', '縫合線特寫', '掠食者頭部特寫'];
-
-    const SEAM_HALF_WIDTH_DEG = 40.0;
 
     // UI Cache
     const teleAngle = document.getElementById('tele-angle');
@@ -1310,7 +1308,7 @@
       if (targetBtn) targetBtn.classList.add('active');
 
       if (mode === 'seam') {
-        currentAngleDeg = 0.0;
+        currentAngleDeg = 315.0;
         isPlaying = true;
       }
     }
@@ -1399,8 +1397,10 @@
         if (currentMode === 'patrol') {
           currentAngleDeg = (currentAngleDeg + stepRate) % 720.0;
         } else if (currentMode === 'seam') {
-          currentAngleDeg = Math.sin(time * 0.7 * speed) * 45.0;
-          if (currentAngleDeg < 0) currentAngleDeg += 720.0;
+          // Loop smoothly forward through the seam transition window (315° -> 410°)
+          const seamSpan = 95.0;
+          const tCycle = (time * 16.0 * speed) % seamSpan;
+          currentAngleDeg = 315.0 + tCycle;
         }
         peristalsisCycle += delta * 6.5 * speed;
 
@@ -1412,13 +1412,46 @@
       const isSecondLoop = (currentAngleDeg >= 360.0);
       const baseChiralityIsLeft = !isSecondLoop;
 
-      const distToSeam1 = Math.min(currentAngleDeg, 720.0 - currentAngleDeg);
-      const distToSeam2 = Math.abs(currentAngleDeg - 360.0);
-      const distToNearestSeam = Math.min(distToSeam1, distToSeam2);
+      // ========================================================
+      // Strict Topological State Machine:
+      // 穩定態 (Stable) -> 手性分離態 (Delaminated) -> 縫合態 (Suturing) -> 穩定態 (Stable)
+      // Separation occurs exclusively when ENTERING the seam.
+      // Suturing occurs exclusively when EXITING the seam.
+      // Suturing can NEVER happen before Delamination.
+      // ========================================================
+      const DELAM_RANGE = 35.0;  // 進入縫合線前 35°：手性分離態
+      const SUTURE_RANGE = 35.0; // 穿過縫合線後 35°：縫合重組態
 
+      let currentPhase = 'stable'; // 'stable' | 'delaminated' | 'suturing'
       let separationRatio = 0.0;
-      if (distToNearestSeam < SEAM_HALF_WIDTH_DEG) {
-        separationRatio = Math.cos((distToNearestSeam / SEAM_HALF_WIDTH_DEG) * (Math.PI / 2.0));
+
+      // Seam 1 (centered at 360°)
+      if (currentAngleDeg >= (360.0 - DELAM_RANGE) && currentAngleDeg < 360.0) {
+        // 進入第 1 道縫合線：實體向前，虛影向後撕裂延展 (0 -> 1)
+        currentPhase = 'delaminated';
+        const progress = (currentAngleDeg - (360.0 - DELAM_RANGE)) / DELAM_RANGE;
+        separationRatio = 0.5 - 0.5 * Math.cos(progress * Math.PI);
+      } else if (currentAngleDeg >= 360.0 && currentAngleDeg < (360.0 + SUTURE_RANGE)) {
+        // 離開第 1 道縫合線：虛影順莫比烏斯單面性向前迴圈疊加重組 (1 -> 0)
+        currentPhase = 'suturing';
+        const progress = (currentAngleDeg - 360.0) / SUTURE_RANGE;
+        separationRatio = 0.5 + 0.5 * Math.cos(progress * Math.PI);
+      }
+      // Seam 2 (centered at 720° / 0°)
+      else if (currentAngleDeg >= (720.0 - DELAM_RANGE) && currentAngleDeg <= 720.0) {
+        // 進入第 2 道縫合線：實體向前，虛影向後撕裂延展 (0 -> 1)
+        currentPhase = 'delaminated';
+        const progress = (currentAngleDeg - (720.0 - DELAM_RANGE)) / DELAM_RANGE;
+        separationRatio = 0.5 - 0.5 * Math.cos(progress * Math.PI);
+      } else if (currentAngleDeg >= 0.0 && currentAngleDeg < SUTURE_RANGE) {
+        // 離開第 2 道縫合線：虛影順莫比烏斯單面性向前迴圈疊加重組 (1 -> 0)
+        currentPhase = 'suturing';
+        const progress = currentAngleDeg / SUTURE_RANGE;
+        separationRatio = 0.5 + 0.5 * Math.cos(progress * Math.PI);
+      } else {
+        // 穩定態巡弋
+        currentPhase = 'stable';
+        separationRatio = 0.0;
       }
 
       // 1. Position & Animate Physical Organism along the track
@@ -1537,29 +1570,29 @@
       document.getElementById('val-right-arm').innerText = baseChiralityIsLeft ? '三聯時空游動感官鬚 + 微爪' : '高周波黑曜石掠食巨刃 (鏡像互換)';
       document.getElementById('val-heart').innerText = `${Math.round(72 + Math.sin(time * 3) * 12 + separationRatio * 35)} BPM (量子相干)`;
 
-      // Update State Logs
-      if (separationRatio > 0.45) {
+      // Update State Logs & Telemetry based on strict phase
+      if (currentPhase === 'delaminated') {
         telePhase.innerText = '手性分離態 (DELAMINATED)';
         telePhase.className = 'telemetry-val purple';
-        teleEpr.innerText = '99.98% (12對相干通道)';
+        teleEpr.innerText = `${(99.0 + separationRatio * 0.98).toFixed(2)}% (12對相干通道激發)`;
 
         cardTitle.innerText = '手性分離態 (DELAMINATED PHASE)';
-        cardTag.innerText = '● 穿越縫合線';
+        cardTag.innerText = '● 穿越縫合線・手性解構';
         cardTag.style.color = 'var(--accent-purple)';
-        cardDesc.innerHTML = '生物進入莫比烏斯縫合線干擾區！<b>無足16節體節平行軌道舒縮蠕動前行</b>，右旋鏡像虛影被幾何張力向後撕扯延展。12 個主要解剖節點激發大分子量子糾纏光纖，實現跨微觀時空裂隙的零時延神經傳導。';
+        cardDesc.innerHTML = '生物進入莫比烏斯縫合線干擾區！四維幾何張力將鏡像虛影從實體<b>向後撕裂解構</b>，16節實體維持無足平行蠕動前行，虛影順軌道逆向延展。12 個主要解剖節點激發大分子量子糾纏光纖，實現跨微觀時空裂隙的零時延神經傳導。';
         cardState.className = 'state-card purple';
-        bannerText.innerText = '⚡ 警報：縫合線空間撕裂！體節平行貼軌蠕動，鏡像虛影順軌道向後解構延展';
-      } else if (separationRatio > 0.01) {
-        telePhase.innerText = '縫合重組態 (SUTURING)';
+        bannerText.innerText = '⚡ 手性分離態：穿越縫合線！幾何張力將鏡像虛影向後撕裂解構延展';
+      } else if (currentPhase === 'suturing') {
+        telePhase.innerText = '縫合態 (SUTURING)';
         telePhase.className = 'telemetry-val';
-        teleEpr.innerText = '98.50% (單面拓撲黏合)';
+        teleEpr.innerText = `${(95.0 + separationRatio * 4.5).toFixed(2)}% (單面拓撲收斂中)`;
 
         cardTitle.innerText = '縫合態 (SUTURING PHASE)';
-        cardTag.innerText = '● 單面性迴疊';
+        cardTag.innerText = '● 脫離縫合線・單面迴疊';
         cardTag.style.color = 'var(--accent-cyan)';
-        cardDesc.innerHTML = '離開縫合線，鏡像虛影順著莫比烏斯單面幾何重新覆蓋回實體，波函數收斂坍縮，完成手性鏡像切換。';
+        cardDesc.innerHTML = '生物脫離縫合線核心，進入單面性重疊區！鏡像虛影順著莫比烏斯循環的單面幾何<b>重新向前迴圈疊加收斂</b>，大分子量子波函數坍縮，回歸單一實體。';
         cardState.className = 'state-card';
-        bannerText.innerText = '🔄 虛影順莫比烏斯單面性重新閉合，手性構型已成功逆轉';
+        bannerText.innerText = '🔄 縫合態：脫離縫合線！虛影順莫比烏斯單面性重新向前疊加收攏回實體';
       } else {
         telePhase.innerText = '穩定態 (STABLE)';
         telePhase.className = 'telemetry-val crimson';
@@ -1568,7 +1601,7 @@
         cardTitle.innerText = '穩定態 (STABLE PHASE)';
         cardTag.innerText = '● 巡弋單軌';
         cardTag.style.color = 'var(--accent-crimson)';
-        cardDesc.innerHTML = `生物維持常態外骨骼與16節無足平行蠕動推進。當前處於【${baseChiralityIsLeft ? 'L-左旋正向循環' : 'D-右旋逆向循環'}】，體內雙向消旋心臟高速運轉，維持鏡像代謝。`;
+        cardDesc.innerHTML = `生物維持常態外骨骼與 16 節無足平行蠕動推進。當前處於【${baseChiralityIsLeft ? 'L-左旋正向循環' : 'D-右旋逆向循環'}】，體內雙向消旋心臟高速運轉，維持鏡像代謝。`;
         cardState.className = 'state-card crimson';
         bannerText.innerText = `無足16節平行貼軌蠕動中：當前手性為 [${baseChiralityIsLeft ? 'L-左旋' : 'D-右旋'}]，走滿 720° 始能復原`;
       }
